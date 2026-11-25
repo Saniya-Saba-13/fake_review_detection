@@ -1,221 +1,205 @@
-# ReviewGuard AI — Multilingual Fake Product Review Detection
+# ReviewGuard AI: Multilingual Fake Product Review Detection (upgraded)
 
-ReviewGuard AI is a Flask-based web application that analyses product reviews and estimates whether a review is **likely genuine** or **suspicious / likely fake**. It supports English, Hindi (Devanagari), and Hinglish, and provides single-review analysis, batch analysis, explanations, review history, dataset management, and model-performance reports.
+Upgrade of the original *AI-Powered Fake Product Review Detection System*. The existing routes, single/bulk analysis, explanations, history,
+performance page, tests and the `python train_model.py` / `python app.py` workflow are kept; the interface, language support, data pipeline,
+database and training were extended.
 
-> **Important:** A prediction is a statistical estimate, not proof that a review is fake or genuine. Do not use the result alone to accuse a reviewer or make moderation decisions. Negative opinions and the use of Hindi or Hinglish are not evidence of fraud.
+> **Predictions are estimates, not proof of fraud.** Writing in Hindi or Hinglish, or writing a negative review, is never treated as evidence
+> that a review is fake. Language and sentiment are shown next to the verdict but are not model inputs.
 
-## Features
+> **Read this first: the bundled training data is SYNTHETIC.** I could not download real labelled reviews in the build environment, and I know of
+> no verified fake-vs-genuine dataset for Hindi / Hinglish or for Meesho / Flipkart / Myntra reviews. So `build_dataset.py --demo` generates
+> *template-based* reviews in English, Hindi and Hinglish, tagged with the four platform names, so the whole pipeline can run end to end.
+> **Every score measured on them is a real measurement of a model trained on fake data and says nothing about real-world accuracy.**
+> The app shows "Demo model" banners until you train on verified, labelled data that you provide.
 
-- **Single review analysis:** paste a review and optionally provide its title, platform, rating, and product.
-- **Batch analysis:** analyse multiple reviews by pasting text or uploading CSV/XLSX files.
-- **Multilingual text processing:** English, Hindi, Hinglish, and mixed-language detection and normalisation.
-- **Prediction explanations:** confidence estimate, influential terms, and writing-pattern signals.
-- **Sentiment analysis:** sentiment is displayed separately; it is not treated as proof of fake activity.
-- **Product-context check:** highlights a possible mismatch between the review and the selected product category.
-- **Dashboard and history:** view stored analyses, filter results, and inspect model information.
-- **Dataset management:** import labelled review files, inspect dataset statistics, and retrain the model.
-- **Model evaluation:** compare candidate models and view overall, language-wise, and platform-wise metrics.
-- **JSON API:** endpoints for predictions, batch predictions, history, dataset information, and model status.
+## What is new
 
-## Technology
+| Area | Change |
+|---|---|
+| **UI** | New e-commerce style dashboard (plum / violet / orange, rounded cards, hover effects, responsive). Pages: **Home Dashboard**, **Review Analysis**, **Batch Analysis**, **Prediction Results**, **Model Performance**, **Dataset Information**, **About**. |
+| **Languages** | English, Hindi (Devanagari) and Hinglish. No translation: Devanagari normalisation, Hinglish spelling-variant normalisation, TF-IDF on words **and** character n-grams, script/lexicon language detection. |
+| **Models** | Compared on a validation split: Logistic Regression, Multinomial Naive Bayes, Linear SVM, Random Forest (word + character TF-IDF). Optional `train_transformer.py` for XLM-RoBERTa / mBERT / IndicBERT (**not run here**, see below). |
+| **Evaluation** | Overall, **per language** and **per platform** (precision, recall, F1, false-positive rate, ROC-AUC, confusion matrix) plus a check that negative *genuine* reviews are not flagged more often. |
+| **Data** | `ingest.py` (CSV/XLSX, validation, de-duplication, label method required), `build_dataset.py` (unified dataset, per-language balancing); source platform and collection date stored per review. |
+| **Database** | SQLite (`data/reviewguard.db`): analysed reviews, batches, labelled training data, ingestions, model versions. |
+| **Retraining** | From the Dataset Information page or `python train_model.py`; new versioned model, activated automatically, no server restart. |
 
-- Python and Flask
-- scikit-learn, TF-IDF, and classical machine-learning classifiers
-- pandas, NumPy, SciPy, and joblib
-- SQLite for local data storage
-- HTML, CSS, and JavaScript for the web interface
-- pytest for automated tests
+## v23: Hinglish now works
 
-## Supported languages and platforms
+| Change | What it does |
+|---|---|
+| **Hinglish training** | `hinglish_augment.py` converts English *training* reviews into Hinglish (English product words kept; opinion words, connectors and verbs written as romanised Hindi, spelling varied) and keeps the original label. 2,500 genuine + 2,500 fake are added to the **training split only**, after the split, so a converted copy of a validation/test review can never be in training. Equal numbers per class, so "contains Hinglish" is never a clue for either class. |
+| **Language detection** | Mixed reviews such as "Best product ever!!! ... paisa vasool, sabko recommend karunga" were classed as English and got no Hinglish handling. The Hinglish word list and threshold were widened (7 of 3,000 English-source reviews changed, all of which really are Hinglish). |
+| **Contact / advert pattern** | Non-English reviews that give a phone number, WhatsApp / Telegram or say "message karo / contact karo" get a small capped nudge towards suspicious (shown in the "Hinglish / Hindi check" box). English behaviour is unchanged. |
+| **Measured, not assumed** | `data/hinglish_eval.csv`: 80 hand-written Hinglish reviews (40 genuine incl. negative and mixed ones, 40 spam-style), split into `dev` (used while tuning the converter and word lists) and `test` (only for the final numbers). `train_model.py` measures the model on it exactly as the app scores a review, and stores it in `metrics.json` (`hinglish_eval`, and `by_language.Hinglish`). |
+| **"Not very sure" removed only if earned** | Hinglish counts as reliable only with at least 30 test reviews of both classes **and** F1 >= 0.75 **and** false-positive rate <= 10%. Otherwise the old "too little data, treat as a guess" note stays. |
 
-**Languages:** English, Hindi, Hinglish. Mixed or unknown language may also be detected.
+**Measured on the 40 hand-written test reviews (v23 model):** F1 0.83, precision 0.94, recall 0.75, ROC-AUC 0.97, 1 of 20 genuine reviews flagged.
+Before (v20261031-110704): recall 0.60, F1 0.75. A model with no Hinglish knowledge at all but the same rule layer scores F1 0.55 on the same reviews, so the model does add something.
+English did not get worse (test F1 0.771 -> 0.777, same split).
 
-**Platform labels:** Amazon, Flipkart, Meesho, Myntra, and Other.
+**Be careful with these numbers.** They come from 40 reviews written by one author, in the same spirit as the spam patterns the checker looks for, so they are
+*optimistic*: real fake Hinglish reviews are often subtler. Misses on the test set: subtle praise ("ekdum perfect, koi complaint nahi, sabko recommend karunga") and an advert
+phrased without hype words. One genuine, slightly negative review was flagged ("heater ... bijli bahut khinchta hai"). The converted training reviews are **not** real Hinglish and the
+labels are only as good as the English labels they came from (here: rule-based, see v21). Pure Devanagari Hindi is still "not very sure". To improve this properly,
+label real Hinglish reviews (`data/hinglish_labelling_sheet.csv`, `python add_labels.py ...`), grow `hinglish_eval.csv` with them, and run `python train_model.py`.
+`python train_model.py --hinglish-per-class 0` turns the conversion off. Tests: 119.
 
-Platform names are metadata supplied by the user. **This project does not connect to marketplace accounts or automatically fetch live reviews.** Reviews must be pasted or uploaded from data you are permitted to use.
+## Honest status of platform integration
 
-## Project structure
+**No live marketplace connection exists in this project, and none is faked.** Reviews come from text you paste or CSV/XLSX files you upload.
+From a web search (October 2026; please re-check each platform's current developer terms):
+* **Amazon:** the Product Advertising API 5.0 does not return customer reviews (removed with the move from 4.0 in 2020), and I found no public review API in the Selling Partner API.
+* **Flipkart, Meesho, Myntra:** I found no official public review API. Third-party scraping services exist but may violate the platforms' terms, so none is integrated.
 
-```text
+Implemented permitted alternatives: upload exports you are entitled to use (your own seller/brand data, licensed or public datasets) through the
+ingestion pipeline, which stores source platform and collection date. Platforms without data show "Upload / export only".
+
+## Folder structure
+
+```
 fake_review_detection/
-├── app.py                   # Flask application and API routes
-├── config.py                # Application settings and paths
-├── predict.py               # Model loading and review prediction
-├── preprocessing.py         # Review cleaning and text signals
-├── multilingual.py          # Language detection and normalisation
-├── hinglish_support.py      # Hinglish/Hindi language support
-├── sentiment.py             # Sentiment analysis
-├── product_context.py       # Product/review context checks
-├── ingest.py                # CSV/XLSX data ingestion
-├── db.py                    # SQLite database operations
-├── build_dataset.py         # Dataset preparation
-├── train_model.py           # Model comparison and training
-├── train_transformer.py     # Optional transformer training
-├── model_store.py           # Model version management
-├── requirements.txt         # Python dependencies
-├── templates/               # Flask HTML templates
-├── static/                  # CSS, JavaScript, and images
-├── data/                    # Sample, demo, and local application data
-├── models/                  # Trained model versions and metrics
-└── tests/                   # Automated tests
+├── app.py                          Flask app: pages + JSON API (database backed)
+├── config.py                       paths, platforms, limits
+├── multilingual.py                 Devanagari / Hinglish normalisation + language detection
+├── sentiment.py                    lexicon sentiment (English / Hindi / Hinglish), shown separately
+├── preprocessing.py                original cleaning + text-signal hints (now Hindi/Hinglish aware)
+├── data_utils.py                   original dataset helpers (label encoding, column lookup)
+├── ingest.py                       CSV/XLSX reading, validation, labelled ingestion, unlabelled batches
+├── db.py                           SQLite layer
+├── build_dataset.py                unified + balanced training dataset (CLI)
+├── hinglish_augment.py             English -> Hinglish training conversion (v23)
+├── generate_multilingual_demo.py   SYNTHETIC multilingual demo files
+├── train_model.py                  compare, evaluate, version and register the model
+├── train_transformer.py            OPTIONAL transformer fine-tuning (needs torch + transformers)
+├── model_store.py                  versioned model folders + active pointer
+├── predict.py                      prediction, explanations, language, sentiment
+├── visualize.py                    charts
+├── generate_demo_data.py           original English-only demo generator (kept)
+├── requirements.txt  pytest.ini  README.md
+├── data/    samples/ (unlabelled upload samples, CSV + XLSX)  demo_sources/ (synthetic, per platform)
+│            raw/ (put YOUR labelled files here)  reviewguard.db, unified_training.csv (created)
+├── models/  versions/<version>/{model.joblib, metrics.json}, active.json (created)
+├── templates/  base, index, single_review, bulk_review, history, performance, dataset, about, error
+├── static/     css/style.css   js/{main,dashboard,analyze,bulk,results,dataset}.js   images/
+├── tests/      93 automated tests
+└── docs/       PROJECT_REPORT.md (original report)   UPGRADE_NOTES.md
 ```
 
-## Setup and run (Windows)
+## Windows 10/11 + VS Code: set-up and run
 
-Python 3.10–3.12 is recommended. Python 3.9+ is specified by the project's existing setup notes.
-
-1. Download or clone this repository.
-2. Open a terminal in the `fake_review_detection` folder — the folder containing `app.py`.
-3. Create and activate a virtual environment:
+Python 3.9+ (3.10 to 3.12 recommended). Open the folder that **contains `app.py`** in VS Code, then *Terminal > New Terminal* (PowerShell); check with `dir app.py`.
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-```
-
-4. Install dependencies:
-
-```powershell
 python -m pip install --upgrade pip
 pip install -r requirements.txt
-```
-
-5. Build the demonstration dataset:
-
-```powershell
 python build_dataset.py --demo
-```
-
-6. Train and activate a model:
-
-```powershell
 python train_model.py
-```
-
-7. Start the web application:
-
-```powershell
 python app.py
 ```
+Open <http://127.0.0.1:5000>. (If activation is blocked: `Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned`.)
+* `build_dataset.py --demo` generates the SYNTHETIC demo files, ingests them into the database (flagged *demo*) and writes `data\unified_training.csv`.
+* `train_model.py` compares the models (the Random Forest is the slowest; allow a few minutes), prints per-language results and activates the new model.
+* Tests: `python -m pytest -v` (or `python -m unittest discover -s tests -t . -v`).
+* Fonts (Plus Jakarta Sans, Noto Sans Devanagari) load from Google Fonts; offline, system fonts are used (Nirmala UI renders Hindi on Windows).
 
-Open the local address printed in the terminal. The application normally uses:
+## Using the app
 
-```text
-http://127.0.0.1:5000/single
-```
+* **Review Analysis:** paste a review, pick a platform (Meesho, Flipkart, Myntra, Amazon, Other), optionally a title and star rating, press *Analyse Review*. You get the verdict, confidence, **detected language**, **sentiment**, influential words and surface-pattern hints.
+* **Batch Analysis:** paste one review per line, or upload `.csv` / `.xlsx` (column `review`; optional `platform`, `rating`, `title`). Samples: `data\samples\analysis_upload_multilingual.csv` / `.xlsx` (16 hand-written, unlabelled reviews in English, Hindi and Hinglish).
+* **Prediction Results:** every stored prediction, filterable by platform, verdict and language.
+* **Dataset Information:** what is in the labelled dataset (by platform, language and label method), upload verified labelled files, retrain, platform-integration status.
+* **Model Performance:** measured metrics overall, per language, per platform, confusion matrix, all candidates, model versions.
 
-If PowerShell blocks virtual-environment activation, run:
+## Bringing in real data (what you need to do)
 
-```powershell
-Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
-```
+1. Obtain labelled reviews you are allowed to use. Public fake-review datasets are mostly English and often machine-generated (e.g. the "Fake Reviews Dataset" with CG/OR labels on Kaggle; check its licence). I know of no verified Hindi/Hinglish fake-vs-genuine dataset, so plan to **annotate your own** (several annotators, with agreement checks).
+2. Save as CSV (UTF-8, needed for Hindi) or XLSX with: `review` (or `review_text` / `text`), `label` (genuine/fake, OR/CG or 0/1) and optionally `platform`, `review_title`, `rating`, `collection_date`, `label_method`.
+3. **State how the labels were obtained** (`label_method`, e.g. `manual_annotation`, `moderator_removed`). Ingestion refuses files without it; a label is never assumed from the platform.
+4. Ingest on *Dataset Information*, or:
+   ```powershell
+   python build_dataset.py --ingest data\raw\meesho_labelled.csv --platform Meesho --label-method manual_annotation
+   python train_model.py
+   ```
+   `train_model.py` uses verified rows only once there are at least 200 (otherwise it falls back to demo rows and says so).
 
-Then activate the environment again.
+Duplicates (after spelling normalisation) are skipped, and identical text with a conflicting label is reported, not stored.
+Training data is balanced **per language** (the larger class is down-sampled) so that no language is mostly "fake".
 
-## First run and demo-data limitation
+## Models and the transformer option
 
-The bundled demo-data generator creates **synthetic/template-based reviews** so the full application and training workflow can be demonstrated. These are not real customer reviews.
+`train_model.py` compares four classical models on word + character TF-IDF using a stratified (language x label) 70/15/15 split made **before** fitting; the TF-IDF vocabulary is learned inside the pipeline from the training split only.
+Selection: highest validation F1 on the fake class (ties by ROC-AUC); the test split is used once for the report.
 
-Metrics produced using synthetic data measure performance on that synthetic dataset only. They do **not** establish real-world accuracy. The application identifies demo-trained models as demo models.
-
-For meaningful evaluation, collect or obtain real labelled reviews that you are legally allowed to use, review the labels carefully, and evaluate on a separate representative test set.
-
-## Using the application
-
-### Analyse one review
-Open the single-review page, paste the review, select a platform, and optionally enter the title, rating, and product information. Submit it to view the estimate and explanation.
-
-### Analyse multiple reviews
-Use the batch-analysis page. You can paste one review per line or upload a `.csv` or `.xlsx` file. The review text column should be named `review`; optional columns include `title`, `platform`, `rating`, and `product`.
-
-### Import labelled data and retrain
-Use the Dataset Information page or the command line. Labelled data must include a review-text column, a label column, and an explanation of how the labels were obtained (`label_method`).
-
-Example:
-
-```powershell
-python build_dataset.py --ingest data\raw\reviews.csv --platform Flipkart --label-method manual_annotation
-python train_model.py
-```
-
-Accepted label formats include genuine/fake, OR/CG, or 0/1 as supported by the ingestion pipeline. Use UTF-8 CSV encoding for Hindi text. Review the ingestion report before training.
-
-The training workflow uses verified labelled records when enough are available; otherwise its automatic mode may use demo records. Check the training output and model metadata to confirm which data source was used.
-
-## Model training
-
-The standard training script compares four classical classifiers using word and character TF-IDF features:
-
-- Logistic Regression
-- Multinomial Naive Bayes
-- Linear Support Vector Machine
-- Random Forest
-
-The data is split into training, validation, and test subsets. Model selection is based on validation F1 for the fake class, with ROC-AUC used to break ties. The held-out test split is used for reporting.
-
-An optional transformer workflow is provided:
-
+`train_transformer.py` fine-tunes XLM-RoBERTa (`xlm-roberta-base`), multilingual BERT or IndicBERT on the **same split**, stores a new version with metrics in the same format, and activates it only with `--activate`.
+**I could not run it** (no PyTorch or internet in the build environment); only its dependency check is tested. Use a GPU if possible:
 ```powershell
 pip install torch transformers
 python train_transformer.py --model xlm-roberta --epochs 3
+python train_transformer.py --model indic-bert --epochs 4
 ```
+Compare versions on *Model Performance*. TF-IDF models are not necessarily worse than transformers, especially with little data.
 
-Transformer training may require substantial memory and a compatible GPU. It is optional; the standard scikit-learn workflow does not require these packages.
+## JSON API (all return `{"ok": ...}`)
 
-## Run tests
-
-From the project folder:
-
-```powershell
-python -m pytest -v
-```
-
-The tests cover core preprocessing, multilingual support, ingestion, database operations, prediction/training workflows, and API behaviour. Passing automated tests verifies tested software behaviour; it does not prove that predictions are accurate or fair on real-world data.
-
-## API overview
-
-The Flask application exposes JSON endpoints including:
-
-| Method | Endpoint | Purpose |
+| Method | Route | Notes |
 |---|---|---|
-| `POST` | `/api/predict` | Analyse one review |
-| `POST` | `/api/predict-bulk` | Analyse a batch or uploaded file |
-| `GET`, `DELETE` | `/api/history` | Read or clear analysis history |
-| `GET` | `/api/stats` | Dashboard statistics |
-| `GET` | `/api/dataset-info` | Dataset information |
-| `GET` | `/api/platforms` | Supported platform labels |
-| `GET` | `/api/model-info` | Active model information |
-| `GET` | `/api/models` | Available model versions |
-| `GET` | `/api/health` | Application health |
-| `POST` | `/api/ingest` | Import labelled data (local-only) |
-| `POST` | `/api/retrain` | Start model retraining (local-only) |
-| `GET` | `/api/retrain/status` | Check retraining status |
+| POST | `/api/predict` | `{"review","platform"?,"title"?,"rating"?}`; stores the result |
+| POST | `/api/predict-bulk` | JSON `{"reviews":[...],"platform"}` or multipart `file` (.csv/.xlsx) + `platform` |
+| GET / DELETE | `/api/history` | filters `platform`, `label`, `language`, `limit`, `offset` |
+| GET | `/api/stats`, `/api/dataset-info`, `/api/platforms`, `/api/model-info`, `/api/models`, `/api/health` | |
+| POST | `/api/ingest` | multipart `file`, `platform`, `label_method` (localhost only) |
+| POST / GET | `/api/retrain`, `/api/retrain/status` | background job (localhost only) |
+| POST | `/api/models/activate` | `{"version"}` (localhost only) |
 
-For exact request fields and limits, refer to the route definitions in `app.py`.
+Limits: 5000 characters per review, 1000 reviews per batch, 6 MB uploads, 50,000 rows per ingestion file.
 
-## Data, privacy, and GitHub notes
+## Testing
 
-- Do not commit private customer data, personal information, API keys, passwords, or other secrets.
-- Check the licence and usage terms of every dataset before publishing or using it.
-- The local SQLite database and generated model files may contain data or artefacts that you do not want to publish. Review them before pushing the repository.
-- Use a `.gitignore` file to exclude virtual environments, caches, local databases, and private raw datasets.
-- Do not describe the project as having live Amazon/Flipkart/Meesho/Myntra integration; it currently analyses user-provided text and files.
+`python -m pytest -v` runs 93 tests: the spec sentences in English/Hindi/Hinglish (language, sentiment, prediction structure), normalisation, ingestion (CSV, XLSX, invalid and empty files,
+duplicates, conflicts), database, balancing, leakage-free splits, training artefacts, per-language and per-platform metrics, **fairness checks on held-out synthetic reviews** (genuine negative and
+positive reviews not flagged fake; Hindi/Hinglish not flagged more than English), suspicious promotional and repetitive reviews, all four platform labels, the API (validation, uploads, limits,
+history persistence, retraining job, local-only actions, behaviour without a model) and a cross-check that every element id used by the JavaScript exists in its page.
+The fairness tests use **synthetic** data, so they verify the code, not real-world fairness. **Not tested here:** the browser UI itself (no browser was available) and `train_transformer.py`.
 
-## Limitations
+## Troubleshooting
 
-- Predictions depend on the quality, size, and representativeness of the labelled training data.
-- Synthetic demo data is only for demonstrating the pipeline.
-- Hindi and Hinglish performance requires more independently labelled real-world examples for reliable evaluation.
-- Writing style, language, sentiment, rating, or a product mismatch cannot independently prove that a review is fraudulent.
-- No live marketplace review collection is implemented.
+| Problem | Fix |
+|---|---|
+| Banner "No trained model yet" | `python build_dataset.py --demo` then `python train_model.py`, refresh |
+| `can't open file` / `Could not open requirements file` | wrong folder: `cd` into the folder that contains `app.py` |
+| Hindi shows as `????` in a CSV | save the CSV as **UTF-8** (Excel: "CSV UTF-8") or use .xlsx |
+| `ModuleNotFoundError: openpyxl` | `pip install -r requirements.txt` (needed for .xlsx) |
+| Short generic reviews come back "low confidence" | expected: very little evidence; see the explanation text |
+| Training says "Not enough labelled data" | needs >= 200 reviews and >= 40 per class after cleaning |
+| Hindi words in a chart show as boxes | install a Devanagari font (Windows has Nirmala UI); the Performance page also lists top words as text |
+| "Could not load the model" after upgrading libraries | run `python train_model.py` again |
 
-## Future improvements
+## Product-based checking (v16)
 
-- Expand independently labelled datasets across languages and product categories.
-- Improve evaluation with larger, representative, independently annotated test sets.
-- Add carefully reviewed integrations only where official APIs and platform terms permit them.
-- Monitor false positives and false negatives after deployment.
+On **Check one review**, pick the product (Add more details → *Product being reviewed*). The checker then also asks: does the review talk about
+that kind of product?
 
-## License
+* **Clear mismatch** (e.g. an air-fryer review under a Saree): the suspicion score is raised a little (capped; log-odds +0.8) and the result
+  card says why. This is a hint, not proof.
+* **Match or no product words** ("good quality, fast delivery"): no change. A match never proves a review is genuine.
+* Word lists are in `product_context.py` (English, Hinglish, Hindi); extend `LEXICON` for your products.
+* **Training:** add a `product` column to your labelled CSV/XLSX (also accepted: `product_name`, `product_category`). If at least 20% of
+  the labelled rows have a product, `python train_model.py` trains a *product-aware* model (product group + review-vs-product fit are extra
+  features). The model shipped in this zip was trained without product data, so it uses only the product check above.
+* Bulk upload also reads an optional `product` column.
 
-No licence is specified in the supplied project files. Add a `LICENSE` file before presenting the repository as open source. Until then, all rights remain with the applicable copyright holder.
+## Better Hinglish / Hindi checking (v17)
+
+* **English bridge:** for Hinglish, Hindi and mixed reviews the English meaning of known words is appended to the text the model sees
+  ("paisa vasool" -> "value for money"). The original text is kept. This lets what the model learned from English reviews apply to Hinglish.
+  Word lists: `hinglish_support.py` (`WORDS`, `PHRASES`, `HYPE`). Add your own spellings and slang there.
+* **Spam-pattern check** (Hinglish/Hindi/mixed only): the same phrase repeated again and again, or four or more hype phrases stacked
+  together, raises the suspicion score a little (capped). The result card shows a "Hinglish / Hindi check" box.
+* **Training:** `python train_model.py` applies the same bridge to non-English training rows.
+* **(Superseded by v23, see above.) Accuracy was NOT measured for Hinglish at v17.** The training data has only 12 Hinglish reviews, so the tool still says "Not very sure" for
+  Hinglish. To measure and improve it, label `data/hinglish_labelling_sheet.csv` (genuine / fake) and run
+  `python add_labels.py "C:\path\hinglish_labelling_sheet_filled.csv"`. Aim for 200+ of each label.
